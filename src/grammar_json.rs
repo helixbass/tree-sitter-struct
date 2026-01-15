@@ -14,39 +14,119 @@ pub fn read(contents: &str) -> Result<Root, Error> {
     serde_json::from_str(contents).map_err(|err| Error::GrammarJson(err.to_string()))
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct Root {
     pub rules: HashMap<String, Rule>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Rule {
     Prec(Prec),
     Seq(Seq),
-    String(String),
+    String(String_),
     Blank,
     Choice(Choice),
     Repeat(Repeat),
-    Symbol(String),
+    Symbol(Symbol),
+    Field(Field),
+    Pattern(Pattern),
+    Alias(Alias),
+    PrecRight(PrecRight),
+    Repeat1(Repeat1),
+    PrecLeft(PrecLeft),
+    Token(Token),
+    ImmediateToken(ImmediateToken),
 }
 
-#[derive(Deserialize)]
+pub type Precision = i32;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Prec {
-    pub value: u32,
+    pub value: Precision,
     pub content: Box<Rule>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Seq {
     pub members: Vec<Rule>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Choice {
     pub members: Vec<Rule>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Repeat {
+    pub content: Box<Rule>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Symbol {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct String_ {
+    pub value: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Field {
+    pub name: String,
+    pub content: Box<Rule>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Pattern {
+    pub value: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Alias {
+    pub content: Box<Rule>,
+    pub named: bool,
+    pub value: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrecRight {
+    pub value: Precision,
+    pub content: Box<Rule>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Repeat1 {
+    pub content: Box<Rule>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrecLeft {
+    pub value: Precision,
+    pub content: Box<Rule>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Token {
+    pub content: Box<Rule>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImmediateToken {
     pub content: Box<Rule>,
 }
