@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use indexmap::IndexMap;
 use serde::Deserialize;
 
 use crate::Error;
@@ -16,7 +16,7 @@ pub fn read(contents: &str) -> Result<Root, Error> {
 
 #[derive(Debug, Deserialize)]
 pub struct Root {
-    pub rules: HashMap<String, Rule>,
+    pub rules: IndexMap<String, Rule>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,6 +37,12 @@ pub enum Rule {
     PrecLeft(PrecLeft),
     Token(Token),
     ImmediateToken(ImmediateToken),
+}
+
+impl Rule {
+    pub fn is_blank(&self) -> bool {
+        matches!(self, Self::Blank)
+    }
 }
 
 pub type Precision = i32;
