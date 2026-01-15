@@ -9,7 +9,13 @@ fn main() {
 
     let grammar_json = read_from_file(&args.grammar_json_filename).unwrap();
     // println!("grammar_json: {grammar_json:#?}");
-    generate(&grammar_json, &args.language);
+    generate(
+        &grammar_json,
+        &args.language,
+        &[(";".to_owned(), "semicolon".to_owned())]
+            .into_iter()
+            .collect(),
+    );
 }
 
 #[derive(Parser)]
