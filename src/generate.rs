@@ -68,20 +68,34 @@ fn get_struct_or_enum(
                     get_enum_variant_and_struct_or_enum(member, &enum_name, string_literals)
                 })
                 .collect::<Vec<_>>();
-            let enum_variants = enum_variants_and_structs.iter().map(|(variant, _)| variant);
+            let enum_variants = enum_variants_and_structs
+                .iter()
+                .map(|(variant, _)| variant.clone())
+                .collect::<Vec<_>>();
             (
                 {
-                    let enum_name = format_ident!("{enum_name}");
+                    let enum_ = print_enum(&format_ident!("{enum_name}"), &enum_variants);
+                    let enum_variant_struct_or_enums = enum_variants_and_structs
+                        .iter()
+                        .map(|(_, struct_or_enum)| struct_or_enum);
                     quote! {
-                        pub enum #enum_name {
-                            #(#enum_variants),*
-                        }
+                        #enum_
+
+                        #(#enum_variant_struct_or_enums)*
                     }
                 },
                 enum_name,
             )
         }
         rule => unimplemented!("rule: {rule:#?}"),
+    }
+}
+
+fn print_enum(enum_name: &Ident, enum_variants: &[TokenStream]) -> TokenStream {
+    quote! {
+        pub enum #enum_name {
+            #(#enum_variants),*
+        }
     }
 }
 
@@ -145,8 +159,11 @@ fn get_enum_variant_and_struct_or_enum(
             get_enum_variant_and_struct_or_enum(&prec.content, parent_enum_name, string_literals)
         }
         Rule::Symbol(symbol) => {
-            let enum_variant_name = format_ident!("{}", without_leading_underscore(&symbol.name));
-            (quote! { #enum_variant_name }, quote! {})
+            let enum_variant_name = format_ident!(
+                "{}",
+                without_leading_underscore(&symbol.name).to_pascal_case()
+            );
+            (quote! { #enum_variant_name(#enum_variant_name) }, quote! {})
         }
         rule => unimplemented!("rule: {rule:#?}"),
     }
@@ -196,7 +213,7 @@ fn without_leading_underscore(name: &str) -> String {
 
 fn get_struct_field_name(rule: &Rule) -> String {
     match rule {
-        Rule::Symbol(symbol) => symbol.name.clone(),
+        Rule::Symbol(symbol) => without_leading_underscore(&symbol.name),
         Rule::Repeat(repeat) => pluralize(&get_struct_field_name(&repeat.content)),
         Rule::Seq(seq) => get_struct_field_name(
             seq.members
