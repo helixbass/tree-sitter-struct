@@ -33,7 +33,7 @@ fn get_struct_or_enum(
             let struct_fields = seq
                 .members
                 .iter()
-                .map(|member| get_struct_field(member))
+                .map(|member| get_struct_field(member, string_literals))
                 .collect::<Vec<_>>();
             (
                 quote! {
@@ -85,7 +85,7 @@ fn get_struct_or_enum(
     }
 }
 
-fn get_struct_field(rule: &Rule) -> TokenStream {
+fn get_struct_field(rule: &Rule, string_literals: &HashMap<String, SnakeCaseName>) -> TokenStream {
     match rule {
         Rule::Choice(choice) if is_option(choice) => {
             let struct_field_type = get_type(&choice.members[0]);
@@ -100,6 +100,19 @@ fn get_struct_field(rule: &Rule) -> TokenStream {
                 &format_ident!("{}", get_struct_field_name(rule)),
                 quote! { Vec<#item_type> },
             )
+        }
+        Rule::Symbol(symbol) => {
+            let item_type = get_type(rule);
+            print_struct_field(
+                &format_ident!("{}", without_leading_underscore(&symbol.name)),
+                quote! { #item_type },
+            )
+        }
+        Rule::String(string) => {
+            let struct_field_name = format_ident!("{}", string_literals[&string.value]);
+            let struct_field_type = string_literals[&string.value].to_pascal_case();
+            let struct_field_type = format_ident!("{}", struct_field_type);
+            print_struct_field(&struct_field_name, quote! { #struct_field_type })
         }
         rule => unimplemented!("rule: {rule:#?}"),
     }
@@ -136,10 +149,18 @@ fn get_enum_variant_and_struct_or_enum(
 fn get_type(rule: &Rule) -> TokenStream {
     match rule {
         Rule::Symbol(symbol) => {
-            let type_ = symbol.name.to_pascal_case();
+            let type_ = without_leading_underscore(&symbol.name).to_pascal_case();
             quote! { #type_ }
         }
         rule => unimplemented!("rule: {rule:#?}"),
+    }
+}
+
+fn without_leading_underscore(name: &str) -> String {
+    if name.starts_with("_") {
+        name[1..].to_owned()
+    } else {
+        name.to_owned()
     }
 }
 
@@ -147,6 +168,12 @@ fn get_struct_field_name(rule: &Rule) -> String {
     match rule {
         Rule::Symbol(symbol) => symbol.name.clone(),
         Rule::Repeat(repeat) => pluralize(&get_struct_field_name(&repeat.content)),
+        Rule::Seq(seq) => get_struct_field_name(
+            seq.members
+                .iter()
+                .find(|member| matches!(member, Rule::Symbol(_)))
+                .expect("Couldn't find symbol in seq"),
+        ),
         rule => unimplemented!("rule: {rule:#?}"),
     }
 }
