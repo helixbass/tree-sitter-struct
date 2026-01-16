@@ -41,11 +41,7 @@ fn get_struct_or_enum(
                 .map(|member| get_struct_field(member, string_literals))
                 .collect::<Vec<_>>();
             (
-                quote! {
-                    pub struct #struct_name {
-                        #(#struct_fields)*
-                    }
-                },
+                print_struct(&format_ident!("{struct_name}"), &struct_fields),
                 struct_name,
             )
         }
@@ -59,11 +55,7 @@ fn get_struct_or_enum(
                 quote! { #struct_field_type },
             )];
             (
-                quote! {
-                    pub struct #struct_name {
-                        #(#struct_fields)*
-                    }
-                },
+                print_struct(&format_ident!("{struct_name}"), &struct_fields),
                 struct_name,
             )
         }
@@ -78,15 +70,26 @@ fn get_struct_or_enum(
                 .collect::<Vec<_>>();
             let enum_variants = enum_variants_and_structs.iter().map(|(variant, _)| variant);
             (
-                quote! {
-                    pub enum #enum_name {
-                        #(#enum_variants),*
+                {
+                    let enum_name = format_ident!("{enum_name}");
+                    quote! {
+                        pub enum #enum_name {
+                            #(#enum_variants),*
+                        }
                     }
                 },
                 enum_name,
             )
         }
         rule => unimplemented!("rule: {rule:#?}"),
+    }
+}
+
+fn print_struct(struct_name: &Ident, struct_fields: &[TokenStream]) -> TokenStream {
+    quote! {
+        pub struct #struct_name {
+            #(#struct_fields),*
+        }
     }
 }
 
@@ -173,7 +176,10 @@ fn enum_variant_and_struct_or_enum(
 fn get_type(rule: &Rule) -> TokenStream {
     match rule {
         Rule::Symbol(symbol) => {
-            let type_ = without_leading_underscore(&symbol.name).to_pascal_case();
+            let type_ = format_ident!(
+                "{}",
+                without_leading_underscore(&symbol.name).to_pascal_case()
+            );
             quote! { #type_ }
         }
         rule => unimplemented!("rule: {rule:#?}"),
