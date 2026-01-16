@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 
 use heck::ToPascalCase;
 use proc_macro2::{Ident, TokenStream};
@@ -12,11 +13,15 @@ pub fn generate(root: &Root, language: &str, string_literals: &HashMap<String, S
     let rules = root
         .rules
         .iter()
-        .filter(|(rule_name, _)| !rule_name.starts_with("_"))
         .map(|(rule_name, rule)| {
             get_struct_or_enum(rule, Some(rule_name.clone()), None, string_literals).0
         })
         .collect::<Vec<_>>();
+    let code = quote! {
+        #(#rules)*
+    }
+    .to_string();
+    fs::write("tmp-out.rs", code).unwrap();
 }
 
 fn get_struct_or_enum(
@@ -127,23 +132,42 @@ fn get_enum_variant_and_struct_or_enum(
         Rule::Seq(seq) => {
             let (enum_variant_struct_or_enum, enum_variant_struct_or_enum_name) =
                 get_struct_or_enum(rule, None, Some(parent_enum_name), string_literals);
-            (
-                {
-                    assert!(enum_variant_struct_or_enum_name.starts_with(parent_enum_name));
-                    let enum_variant_name =
-                        enum_variant_struct_or_enum_name[parent_enum_name.len()..].to_owned();
-                    let enum_variant_struct_or_enum_name =
-                        format_ident!("{enum_variant_struct_or_enum_name}");
-                    let enum_variant_name = format_ident!("{enum_variant_name}");
-                    quote! {
-                        #enum_variant_name(#enum_variant_struct_or_enum_name)
-                    }
-                },
+            enum_variant_and_struct_or_enum(
+                &enum_variant_struct_or_enum_name,
+                parent_enum_name,
                 enum_variant_struct_or_enum,
             )
         }
+        Rule::Prec(prec) => {
+            get_enum_variant_and_struct_or_enum(&prec.content, parent_enum_name, string_literals)
+        }
+        Rule::Symbol(symbol) => {
+            let enum_variant_name = format_ident!("{}", without_leading_underscore(&symbol.name));
+            (quote! { #enum_variant_name }, quote! {})
+        }
         rule => unimplemented!("rule: {rule:#?}"),
     }
+}
+
+fn enum_variant_and_struct_or_enum(
+    enum_variant_struct_or_enum_name: &str,
+    parent_enum_name: &str,
+    enum_variant_struct_or_enum: TokenStream,
+) -> (TokenStream, TokenStream) {
+    (
+        {
+            assert!(enum_variant_struct_or_enum_name.starts_with(parent_enum_name));
+            let enum_variant_name =
+                enum_variant_struct_or_enum_name[parent_enum_name.len()..].to_owned();
+            let enum_variant_struct_or_enum_name =
+                format_ident!("{enum_variant_struct_or_enum_name}");
+            let enum_variant_name = format_ident!("{enum_variant_name}");
+            quote! {
+                #enum_variant_name(#enum_variant_struct_or_enum_name)
+            }
+        },
+        enum_variant_struct_or_enum,
+    )
 }
 
 fn get_type(rule: &Rule) -> TokenStream {
