@@ -38,10 +38,28 @@ fn get_struct_or_enum(
             let struct_fields = seq
                 .members
                 .iter()
-                .map(|member| get_struct_field(member, string_literals))
+                .map(|member| {
+                    get_struct_field_and_struct_or_enum(member, &struct_name, string_literals)
+                })
                 .collect::<Vec<_>>();
             (
-                print_struct(&format_ident!("{struct_name}"), &struct_fields),
+                {
+                    let printed_struct = print_struct(
+                        &format_ident!("{struct_name}"),
+                        &struct_fields
+                            .iter()
+                            .map(|(struct_field, _)| struct_field.clone())
+                            .collect::<Vec<_>>(),
+                    );
+                    let sub_struct_and_enum_types = struct_fields
+                        .iter()
+                        .map(|(_, struct_or_enum_type)| struct_or_enum_type.clone())
+                        .collect::<Vec<_>>();
+                    quote! {
+                        #printed_struct
+                        #(#sub_struct_and_enum_types)*
+                    }
+                },
                 struct_name,
             )
         }
@@ -107,34 +125,84 @@ fn print_struct(struct_name: &Ident, struct_fields: &[TokenStream]) -> TokenStre
     }
 }
 
-fn get_struct_field(rule: &Rule, string_literals: &HashMap<String, SnakeCaseName>) -> TokenStream {
+fn get_struct_field_and_struct_or_enum(
+    rule: &Rule,
+    parent_struct_name: &str,
+    string_literals: &HashMap<String, SnakeCaseName>,
+) -> (TokenStream, TokenStream) {
     match rule {
         Rule::Choice(choice) if is_option(choice) => {
             let struct_field_type = get_type(&choice.members[0]);
-            print_struct_field(
-                &format_ident!("{}", get_struct_field_name(&choice.members[0])),
-                quote! { Option<#struct_field_type> },
+            (
+                print_struct_field(
+                    &format_ident!("{}", get_struct_field_name(&choice.members[0])),
+                    quote! { Option<#struct_field_type> },
+                ),
+                quote! {},
             )
         }
         Rule::Repeat(repeat) => {
             let item_type = get_type(&repeat.content);
-            print_struct_field(
-                &format_ident!("{}", get_struct_field_name(rule)),
-                quote! { Vec<#item_type> },
+            (
+                print_struct_field(
+                    &format_ident!("{}", get_struct_field_name(rule)),
+                    quote! { Vec<#item_type> },
+                ),
+                quote! {},
             )
         }
         Rule::Symbol(symbol) => {
             let item_type = get_type(rule);
-            print_struct_field(
-                &format_ident!("{}", without_leading_underscore(&symbol.name)),
-                quote! { #item_type },
+            (
+                print_struct_field(
+                    &format_ident!("{}", without_leading_underscore(&symbol.name)),
+                    quote! { #item_type },
+                ),
+                quote! {},
             )
         }
         Rule::String(string) => {
             let struct_field_name = format_ident!("{}", string_literals[&string.value]);
             let struct_field_type = string_literals[&string.value].to_pascal_case();
             let struct_field_type = format_ident!("{}", struct_field_type);
-            print_struct_field(&struct_field_name, quote! { #struct_field_type })
+            (
+                print_struct_field(&struct_field_name, quote! { #struct_field_type }),
+                quote! {},
+            )
+        }
+        Rule::Field(field) => {
+            let struct_field_name = format_ident!("{}", field.name);
+            let (struct_field_type, struct_field_struct_or_enum) =
+                get_struct_field_field_type_and_struct_or_enum(
+                    parent_struct_name,
+                    rule,
+                    string_literals,
+                );
+            (
+                print_struct_field(&struct_field_name, quote! { #struct_field_type }),
+                struct_field_struct_or_enum,
+            )
+        }
+        rule => unimplemented!("rule: {rule:#?}"),
+    }
+}
+
+fn get_struct_field_field_type_and_struct_or_enum(
+    parent_struct_name: &str,
+    rule: &Rule,
+    string_literals: &HashMap<String, SnakeCaseName>,
+) -> (TokenStream, TokenStream) {
+    match &*rule.as_field().content {
+        Rule::Choice(_) => {
+            let (enum_, enum_name) =
+                get_struct_or_enum(rule, None, Some(parent_struct_name), string_literals);
+            (
+                {
+                    let enum_name = format_ident!("{enum_name}");
+                    quote! { #enum_name }
+                },
+                enum_,
+            )
         }
         rule => unimplemented!("rule: {rule:#?}"),
     }

@@ -43,6 +43,13 @@ impl Rule {
     pub fn is_blank(&self) -> bool {
         matches!(self, Self::Blank)
     }
+
+    pub fn as_field(&self) -> &Field {
+        match self {
+            Self::Field(field) => field,
+            _ => panic!("expected field"),
+        }
+    }
 }
 
 pub type Precision = i32;
