@@ -9,12 +9,81 @@ use crate::grammar_json::{Choice, Root, Rule};
 
 pub type SnakeCaseName = String;
 
-pub fn generate(root: &Root, language: &str, string_literals: &HashMap<String, SnakeCaseName>) {
+pub type RuleName = String;
+
+#[derive(Clone)]
+pub enum NameOverrideStep {
+    RuleName(NameOverrideStepRuleName),
+    SeqMember(NameOverrideStepSeqMember),
+    Override(String),
+}
+
+impl NameOverrideStep {
+    pub fn as_rule_name(&self) -> &NameOverrideStepRuleName {
+        match self {
+            Self::RuleName(rule_name) => rule_name,
+            _ => panic!("expected rule name"),
+        }
+    }
+
+    pub fn as_override(&self) -> &str {
+        match self {
+            Self::Override(override_) => override_,
+            _ => panic!("expected override"),
+        }
+    }
+}
+
+impl From<NameOverrideStepRuleName> for NameOverrideStep {
+    fn from(value: NameOverrideStepRuleName) -> Self {
+        Self::RuleName(value)
+    }
+}
+
+impl From<NameOverrideStepSeqMember> for NameOverrideStep {
+    fn from(value: NameOverrideStepSeqMember) -> Self {
+        Self::SeqMember(value)
+    }
+}
+
+#[derive(Clone)]
+pub struct NameOverrideStepRuleName {
+    pub rule_name: String,
+    pub steps: Vec<NameOverrideStep>,
+}
+
+#[derive(Clone)]
+pub struct NameOverrideStepSeqMember {
+    pub index: usize,
+    pub steps: Vec<NameOverrideStep>,
+}
+
+pub fn generate(
+    root: &Root,
+    language: &str,
+    string_literals: &HashMap<String, SnakeCaseName>,
+    name_overrides: &[NameOverrideStep],
+) {
+    let name_overrides = name_overrides
+        .into_iter()
+        .map(|name_override| name_override.as_rule_name())
+        .collect::<Vec<_>>();
     let rules = root
         .rules
         .iter()
         .map(|(rule_name, rule)| {
-            get_struct_or_enum(rule, Some(rule_name.clone()), None, string_literals).0
+            get_struct_or_enum(
+                rule,
+                Some(rule_name.clone()),
+                None,
+                string_literals,
+                &name_overrides
+                    .iter()
+                    .filter(|name_override| &name_override.rule_name == rule_name)
+                    .flat_map(|name_override| name_override.steps.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .0
         })
         .collect::<Vec<_>>();
     let code = quote! {
@@ -29,19 +98,41 @@ fn get_struct_or_enum(
     rule_name: Option<String>,
     struct_or_enum_prefix: Option<&str>,
     string_literals: &HashMap<String, SnakeCaseName>,
+    name_overrides: &[NameOverrideStep],
 ) -> (TokenStream, String) {
     let rule_name = rule_name.unwrap_or_else(|| get_struct_field_name(rule).to_pascal_case());
     let struct_or_enum_prefix = struct_or_enum_prefix.unwrap_or("");
     match rule {
         Rule::Seq(seq) => {
             let struct_name = format!("{struct_or_enum_prefix}{}", rule_name.to_pascal_case());
-            let struct_fields = seq
-                .members
-                .iter()
-                .map(|member| {
-                    get_struct_field_and_struct_or_enum(member, &struct_name, string_literals)
-                })
-                .collect::<Vec<_>>();
+            let struct_fields =
+                seq.members
+                    .iter()
+                    .enumerate()
+                    .map(|(member_index, member)| {
+                        let member_name_override = name_overrides.into_iter().find_map(
+                            |name_override| match name_override {
+                                NameOverrideStep::SeqMember(seq_member)
+                                    if seq_member.index == member_index =>
+                                {
+                                    assert_eq!(seq_member.steps.len(), 1);
+                                    assert!(matches!(
+                                        seq_member.steps[0],
+                                        NameOverrideStep::Override(_)
+                                    ));
+                                    Some(seq_member.steps[0].as_override())
+                                }
+                                _ => None,
+                            },
+                        );
+                        get_struct_field_and_struct_or_enum(
+                            member,
+                            &struct_name,
+                            string_literals,
+                            member_name_override,
+                        )
+                    })
+                    .collect::<Vec<_>>();
             (
                 {
                     let printed_struct = print_struct(
@@ -117,6 +208,7 @@ fn get_struct_or_enum(
                         Some(field.name.clone()),
                         Some(struct_or_enum_prefix),
                         string_literals,
+                        &[],
                     )
                 }
                 rule => unimplemented!("rule: {rule:#?}"),
@@ -146,9 +238,11 @@ fn get_struct_field_and_struct_or_enum(
     rule: &Rule,
     parent_struct_name: &str,
     string_literals: &HashMap<String, SnakeCaseName>,
+    name_override: Option<&str>,
 ) -> (TokenStream, TokenStream) {
     match rule {
         Rule::Choice(choice) if is_option(choice) => {
+            assert!(name_override.is_none());
             let struct_field_type = get_type(&choice.members[0]);
             (
                 print_struct_field(
@@ -159,6 +253,7 @@ fn get_struct_field_and_struct_or_enum(
             )
         }
         Rule::Repeat(repeat) => {
+            assert!(name_override.is_none());
             let item_type = get_type(&repeat.content);
             (
                 print_struct_field(
@@ -169,6 +264,7 @@ fn get_struct_field_and_struct_or_enum(
             )
         }
         Rule::Symbol(symbol) => {
+            assert!(name_override.is_none());
             let item_type = get_type(rule);
             (
                 print_struct_field(
@@ -179,6 +275,7 @@ fn get_struct_field_and_struct_or_enum(
             )
         }
         Rule::String(string) => {
+            assert!(name_override.is_none());
             let struct_field_name = format_ident!("{}", string_literals[&string.value]);
             let struct_field_type = string_literals[&string.value].to_pascal_case();
             let struct_field_type = format_ident!("{}", struct_field_type);
@@ -188,6 +285,7 @@ fn get_struct_field_and_struct_or_enum(
             )
         }
         Rule::Field(field) => {
+            assert!(name_override.is_none());
             let struct_field_name = format_ident!("{}", field.name);
             let (struct_field_type, struct_field_struct_or_enum) =
                 get_struct_field_field_type_and_struct_or_enum(
@@ -199,6 +297,10 @@ fn get_struct_field_and_struct_or_enum(
                 print_struct_field(&struct_field_name, quote! { #struct_field_type }),
                 struct_field_struct_or_enum,
             )
+        }
+        Rule::Choice(choice) => {
+            let name_override = name_override.unwrap();
+            unimplemented!()
         }
         rule => unimplemented!("rule: {rule:#?}"),
     }
@@ -212,7 +314,7 @@ fn get_struct_field_field_type_and_struct_or_enum(
     match &*rule.as_field().content {
         Rule::Choice(_) => {
             let (enum_, enum_name) =
-                get_struct_or_enum(rule, None, Some(parent_struct_name), string_literals);
+                get_struct_or_enum(rule, None, Some(parent_struct_name), string_literals, &[]);
             (
                 {
                     let enum_name = format_ident!("{enum_name}");
@@ -233,7 +335,7 @@ fn get_enum_variant_and_struct_or_enum(
     match rule {
         Rule::Seq(seq) => {
             let (enum_variant_struct_or_enum, enum_variant_struct_or_enum_name) =
-                get_struct_or_enum(rule, None, Some(parent_enum_name), string_literals);
+                get_struct_or_enum(rule, None, Some(parent_enum_name), string_literals, &[]);
             enum_variant_and_struct_or_enum(
                 &enum_variant_struct_or_enum_name,
                 parent_enum_name,

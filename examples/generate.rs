@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-use tree_sitter_struct::{generate, read_from_file};
+use tree_sitter_struct::{
+    generate, read_from_file, NameOverrideStep, NameOverrideStepRuleName, NameOverrideStepSeqMember,
+};
 
 fn main() {
     let args = Args::parse();
@@ -153,6 +155,15 @@ fn main() {
         ]
         .into_iter()
         .collect(),
+        &[NameOverrideStepRuleName {
+            rule_name: "macro_definition".to_owned(),
+            steps: vec![NameOverrideStepSeqMember {
+                index: 2,
+                steps: vec![NameOverrideStep::Override("body".to_owned())],
+            }
+            .into()],
+        }
+        .into()],
     );
 }
 
