@@ -105,6 +105,23 @@ fn get_struct_or_enum(
                 enum_name,
             )
         }
+        Rule::Field(field) => {
+            match &*field.content {
+                Rule::Choice(_) => {
+                    get_struct_or_enum(
+                        &field.content,
+                        // TODO: this is ugly, this is semantically overriding
+                        // `rule_name`, really I guess I'm just trying to
+                        // control the generated struct name for this `field()`
+                        // value?
+                        Some(field.name.clone()),
+                        Some(struct_or_enum_prefix),
+                        string_literals,
+                    )
+                }
+                rule => unimplemented!("rule: {rule:#?}"),
+            }
+        }
         rule => unimplemented!("rule: {rule:#?}"),
     }
 }
@@ -289,6 +306,7 @@ fn get_struct_field_name(rule: &Rule) -> String {
                 .find(|member| matches!(member, Rule::Symbol(_)))
                 .expect("Couldn't find symbol in seq"),
         ),
+        Rule::Field(field) => field.name.clone(),
         rule => unimplemented!("rule: {rule:#?}"),
     }
 }
