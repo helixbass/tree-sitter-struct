@@ -113,7 +113,8 @@ fn get_struct_or_enum(
     string_literals: &HashMap<String, SnakeCaseName>,
     name_overrides: &[NameOverrideStep],
 ) -> (TokenStream, String) {
-    let rule_name = rule_name.unwrap_or_else(|| get_struct_field_name(rule).to_pascal_case());
+    let rule_name =
+        rule_name.unwrap_or_else(|| get_struct_field_name(rule, name_overrides).to_pascal_case());
     let struct_or_enum_prefix = struct_or_enum_prefix.unwrap_or("");
     match rule {
         Rule::Seq(seq) => {
@@ -164,6 +165,7 @@ fn get_struct_or_enum(
             )
         }
         Rule::String(string) => {
+            assert!(name_overrides.is_empty());
             let struct_name = format!("{struct_or_enum_prefix}{}", rule_name.to_pascal_case());
             let struct_field_name = &string_literals[&string.value];
             let struct_field_type = string_literals[&string.value].to_pascal_case();
@@ -182,8 +184,25 @@ fn get_struct_or_enum(
             let enum_variants_and_structs = choice
                 .members
                 .iter()
-                .map(|member| {
-                    get_enum_variant_and_struct_or_enum(member, &enum_name, string_literals)
+                .enumerate()
+                .map(|(member_index, member)| {
+                    let name_overrides = name_overrides
+                        .into_iter()
+                        .find_map(|name_override| match name_override {
+                            NameOverrideStep::ChoiceMember(choice_member)
+                                if choice_member.index == member_index =>
+                            {
+                                Some(choice_member.steps.clone())
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    get_enum_variant_and_struct_or_enum(
+                        member,
+                        &enum_name,
+                        string_literals,
+                        &name_overrides,
+                    )
                 })
                 .collect::<Vec<_>>();
             let enum_variants = enum_variants_and_structs
@@ -206,6 +225,7 @@ fn get_struct_or_enum(
             )
         }
         Rule::Field(field) => {
+            assert!(name_overrides.is_empty());
             match &*field.content {
                 Rule::Choice(_) => {
                     get_struct_or_enum(
@@ -255,7 +275,7 @@ fn get_struct_field_and_struct_or_enum(
             let struct_field_type = get_type(&choice.members[0]);
             (
                 print_struct_field(
-                    &format_ident!("{}", get_struct_field_name(&choice.members[0])),
+                    &format_ident!("{}", get_struct_field_name(&choice.members[0], &[])),
                     quote! { Option<#struct_field_type> },
                 ),
                 quote! {},
@@ -266,7 +286,7 @@ fn get_struct_field_and_struct_or_enum(
             let item_type = get_type(&repeat.content);
             (
                 print_struct_field(
-                    &format_ident!("{}", get_struct_field_name(rule)),
+                    &format_ident!("{}", get_struct_field_name(rule, &[])),
                     quote! { Vec<#item_type> },
                 ),
                 quote! {},
@@ -357,11 +377,18 @@ fn get_enum_variant_and_struct_or_enum(
     rule: &Rule,
     parent_enum_name: &str,
     string_literals: &HashMap<String, SnakeCaseName>,
+    name_overrides: &[NameOverrideStep],
 ) -> (TokenStream, TokenStream) {
     match rule {
         Rule::Seq(seq) => {
             let (enum_variant_struct_or_enum, enum_variant_struct_or_enum_name) =
-                get_struct_or_enum(rule, None, Some(parent_enum_name), string_literals, &[]);
+                get_struct_or_enum(
+                    rule,
+                    None,
+                    Some(parent_enum_name),
+                    string_literals,
+                    name_overrides,
+                );
             enum_variant_and_struct_or_enum(
                 &enum_variant_struct_or_enum_name,
                 parent_enum_name,
@@ -369,9 +396,16 @@ fn get_enum_variant_and_struct_or_enum(
             )
         }
         Rule::Prec(prec) => {
-            get_enum_variant_and_struct_or_enum(&prec.content, parent_enum_name, string_literals)
+            assert!(name_overrides.is_empty());
+            get_enum_variant_and_struct_or_enum(
+                &prec.content,
+                parent_enum_name,
+                string_literals,
+                &[],
+            )
         }
         Rule::Symbol(symbol) => {
+            assert!(name_overrides.is_empty());
             let enum_variant_name = format_ident!(
                 "{}",
                 without_leading_underscore(&symbol.name).to_pascal_case()
@@ -424,19 +458,41 @@ fn without_leading_underscore(name: &str) -> String {
     }
 }
 
-fn get_struct_field_name(rule: &Rule) -> String {
+fn get_struct_field_name(rule: &Rule, name_overrides: &[NameOverrideStep]) -> String {
     match rule {
-        Rule::Symbol(symbol) => without_leading_underscore(&symbol.name),
-        Rule::Repeat(repeat) => pluralize(&get_struct_field_name(&repeat.content)),
-        Rule::Seq(seq) => get_struct_field_name(
-            seq.members
-                .iter()
-                .find(|member| matches!(member, Rule::Symbol(_)))
-                .expect("Couldn't find symbol in seq"),
-        ),
-        Rule::Field(field) => field.name.clone(),
+        Rule::Symbol(symbol) => {
+            assert!(name_overrides.is_empty());
+            without_leading_underscore(&symbol.name)
+        }
+        Rule::Repeat(repeat) => {
+            assert!(name_overrides.is_empty());
+            pluralize(&get_struct_field_name(&repeat.content, &[]))
+        }
+        Rule::Seq(seq) => find_single_override(name_overrides)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| {
+                get_struct_field_name(
+                    seq.members
+                        .iter()
+                        .find(|member| matches!(member, Rule::Symbol(_)))
+                        .expect("Couldn't find symbol in seq"),
+                    &[],
+                )
+            }),
+        Rule::Field(field) => {
+            assert!(name_overrides.is_empty());
+            field.name.clone()
+        }
         rule => unimplemented!("rule: {rule:#?}"),
     }
+}
+
+fn find_single_override(name_overrides: &[NameOverrideStep]) -> Option<&str> {
+    if name_overrides.is_empty() {
+        return None;
+    }
+    assert_eq!(name_overrides.len(), 1);
+    Some(name_overrides[0].as_override())
 }
 
 fn print_struct_field(struct_field_name: &Ident, struct_field_type: TokenStream) -> TokenStream {
