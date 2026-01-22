@@ -298,9 +298,25 @@ fn get_struct_field_and_struct_or_enum(
                 struct_field_struct_or_enum,
             )
         }
-        Rule::Choice(choice) => {
+        Rule::Choice(_) => {
             let name_override = name_override.unwrap();
-            unimplemented!()
+            let (enum_definition, enum_name) = get_struct_or_enum(
+                rule,
+                // TODO: this is also ugly
+                Some(name_override.to_owned()),
+                Some(parent_struct_name),
+                string_literals,
+                &[],
+            );
+            (
+                print_struct_field(&format_ident!("{name_override}"), {
+                    let enum_name = format_ident!("{enum_name}");
+                    quote! {
+                        #enum_name
+                    }
+                }),
+                enum_definition,
+            )
         }
         rule => unimplemented!("rule: {rule:#?}"),
     }
