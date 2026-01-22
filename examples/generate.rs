@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use clap::Parser;
 
 use tree_sitter_struct::{
-    generate, read_from_file, NameOverrideStep, NameOverrideStepRuleName, NameOverrideStepSeqMember,
+    generate, read_from_file, NameOverrideStep, NameOverrideStepChoiceMember,
+    NameOverrideStepRuleName, NameOverrideStepSeqMember,
 };
 
 fn main() {
@@ -159,7 +160,24 @@ fn main() {
             rule_name: "macro_definition".to_owned(),
             steps: vec![NameOverrideStepSeqMember {
                 index: 2,
-                steps: vec![NameOverrideStep::Override("body".to_owned())],
+                steps: vec![
+                    NameOverrideStep::Override("body".to_owned()),
+                    NameOverrideStepChoiceMember {
+                        index: 0,
+                        steps: vec![NameOverrideStep::Override("paren".to_owned())],
+                    }
+                    .into(),
+                    NameOverrideStepChoiceMember {
+                        index: 1,
+                        steps: vec![NameOverrideStep::Override("square_bracket".to_owned())],
+                    }
+                    .into(),
+                    NameOverrideStepChoiceMember {
+                        index: 2,
+                        steps: vec![NameOverrideStep::Override("curly_bracket".to_owned())],
+                    }
+                    .into(),
+                ],
             }
             .into()],
         }

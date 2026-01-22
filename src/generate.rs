@@ -15,6 +15,7 @@ pub type RuleName = String;
 pub enum NameOverrideStep {
     RuleName(NameOverrideStepRuleName),
     SeqMember(NameOverrideStepSeqMember),
+    ChoiceMember(NameOverrideStepChoiceMember),
     Override(String),
 }
 
@@ -46,6 +47,12 @@ impl From<NameOverrideStepSeqMember> for NameOverrideStep {
     }
 }
 
+impl From<NameOverrideStepChoiceMember> for NameOverrideStep {
+    fn from(value: NameOverrideStepChoiceMember) -> Self {
+        Self::ChoiceMember(value)
+    }
+}
+
 #[derive(Clone)]
 pub struct NameOverrideStepRuleName {
     pub rule_name: String,
@@ -54,6 +61,12 @@ pub struct NameOverrideStepRuleName {
 
 #[derive(Clone)]
 pub struct NameOverrideStepSeqMember {
+    pub index: usize,
+    pub steps: Vec<NameOverrideStep>,
+}
+
+#[derive(Clone)]
+pub struct NameOverrideStepChoiceMember {
     pub index: usize,
     pub steps: Vec<NameOverrideStep>,
 }
@@ -105,34 +118,30 @@ fn get_struct_or_enum(
     match rule {
         Rule::Seq(seq) => {
             let struct_name = format!("{struct_or_enum_prefix}{}", rule_name.to_pascal_case());
-            let struct_fields =
-                seq.members
-                    .iter()
-                    .enumerate()
-                    .map(|(member_index, member)| {
-                        let member_name_override = name_overrides.into_iter().find_map(
-                            |name_override| match name_override {
-                                NameOverrideStep::SeqMember(seq_member)
-                                    if seq_member.index == member_index =>
-                                {
-                                    assert_eq!(seq_member.steps.len(), 1);
-                                    assert!(matches!(
-                                        seq_member.steps[0],
-                                        NameOverrideStep::Override(_)
-                                    ));
-                                    Some(seq_member.steps[0].as_override())
-                                }
-                                _ => None,
-                            },
-                        );
-                        get_struct_field_and_struct_or_enum(
-                            member,
-                            &struct_name,
-                            string_literals,
-                            member_name_override,
-                        )
-                    })
-                    .collect::<Vec<_>>();
+            let struct_fields = seq
+                .members
+                .iter()
+                .enumerate()
+                .map(|(member_index, member)| {
+                    let name_overrides = name_overrides
+                        .into_iter()
+                        .find_map(|name_override| match name_override {
+                            NameOverrideStep::SeqMember(seq_member)
+                                if seq_member.index == member_index =>
+                            {
+                                Some(seq_member.steps.clone())
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    get_struct_field_and_struct_or_enum(
+                        member,
+                        &struct_name,
+                        string_literals,
+                        &name_overrides,
+                    )
+                })
+                .collect::<Vec<_>>();
             (
                 {
                     let printed_struct = print_struct(
@@ -238,11 +247,11 @@ fn get_struct_field_and_struct_or_enum(
     rule: &Rule,
     parent_struct_name: &str,
     string_literals: &HashMap<String, SnakeCaseName>,
-    name_override: Option<&str>,
+    name_overrides: &[NameOverrideStep],
 ) -> (TokenStream, TokenStream) {
     match rule {
         Rule::Choice(choice) if is_option(choice) => {
-            assert!(name_override.is_none());
+            assert!(name_overrides.is_empty());
             let struct_field_type = get_type(&choice.members[0]);
             (
                 print_struct_field(
@@ -253,7 +262,7 @@ fn get_struct_field_and_struct_or_enum(
             )
         }
         Rule::Repeat(repeat) => {
-            assert!(name_override.is_none());
+            assert!(name_overrides.is_empty());
             let item_type = get_type(&repeat.content);
             (
                 print_struct_field(
@@ -264,7 +273,7 @@ fn get_struct_field_and_struct_or_enum(
             )
         }
         Rule::Symbol(symbol) => {
-            assert!(name_override.is_none());
+            assert!(name_overrides.is_empty());
             let item_type = get_type(rule);
             (
                 print_struct_field(
@@ -275,7 +284,7 @@ fn get_struct_field_and_struct_or_enum(
             )
         }
         Rule::String(string) => {
-            assert!(name_override.is_none());
+            assert!(name_overrides.is_empty());
             let struct_field_name = format_ident!("{}", string_literals[&string.value]);
             let struct_field_type = string_literals[&string.value].to_pascal_case();
             let struct_field_type = format_ident!("{}", struct_field_type);
@@ -285,7 +294,7 @@ fn get_struct_field_and_struct_or_enum(
             )
         }
         Rule::Field(field) => {
-            assert!(name_override.is_none());
+            assert!(name_overrides.is_empty());
             let struct_field_name = format_ident!("{}", field.name);
             let (struct_field_type, struct_field_struct_or_enum) =
                 get_struct_field_field_type_and_struct_or_enum(
@@ -299,14 +308,15 @@ fn get_struct_field_and_struct_or_enum(
             )
         }
         Rule::Choice(_) => {
-            let name_override = name_override.unwrap();
+            let name_override = name_overrides[0].as_override();
+            let remaining_name_overrides = &name_overrides[1..];
             let (enum_definition, enum_name) = get_struct_or_enum(
                 rule,
                 // TODO: this is also ugly
                 Some(name_override.to_owned()),
                 Some(parent_struct_name),
                 string_literals,
-                &[],
+                remaining_name_overrides,
             );
             (
                 print_struct_field(&format_ident!("{name_override}"), {
